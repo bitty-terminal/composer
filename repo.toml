@@ -1,0 +1,14 @@
+[repo]
+name = "composer"
+kind = "plugin"
+lang = "lua/ts"
+role = "candidate command-editor policy plugin; metadata-only scaffold"
+owner = "bitty-plugins"
+docs = "bitty-plugins-docs"
+
+[bootstrap]
+version = "0.0.1"
+status = "metadata-only; not onboarded"
+
+[contracts]
+status = "pending W-73/W-82/W-120"

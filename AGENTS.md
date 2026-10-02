@@ -1,0 +1,5 @@
+# Composer repository guidance
+
+Metadata-only plugin candidate; no implementation/onboarding authorized. Read TODO, repo.toml, CarryCtx, W-73/W-82/W-120 and shared/plugin security contracts. Public APIs only; bounded paste, editor process authority, temporary files, cancellation and PTY submission require approved host contracts. No shell-string editor launch or ambient filesystem access.
+
+English only; no hardcoded host paths/URLs. Start at 0.0.1; Bun owns JS; run just gates. Metadata checks are not plugin behavior evidence. CTX-0001 -> 0002 -> 0003 -> 0004 orders bootstrap/contracts/implementation/independent verification. Narrow scopes, named sessions, managed hooks and task worktrees after first commit. Direct bootstrap authorized, no self-acceptance. No commit/push/release without authority; redacted snapshots only. Preserve existing registry pins; no silent installs, destructive cleanup or unowned process kills. Require public SDK tests and canonical docs synchronization before onboarding.
