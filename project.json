@@ -1,0 +1,11 @@
+{
+  "created_at": "2026-10-02T11:55:15.743604682+00:00",
+  "git_common_dir": "***REDACTED-PATH***",
+  "id": "01M3Y7FXWZRYW9A2HVZ0TKAE6W",
+  "main_branch": "main",
+  "name": "composer",
+  "repository_root": "***REDACTED-PATH***",
+  "schema_version": 4,
+  "task_prefix": "CTX",
+  "updated_at": "2026-10-02T11:55:15.743604682+00:00"
+}
