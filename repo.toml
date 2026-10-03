@@ -11,4 +11,4 @@ version = "0.0.1"
 status = "metadata-only; not onboarded"
 
 [contracts]
-status = "pending W-73/W-82/W-120"
+status = "ready W-73/W-82 accepted; W-01/W-120 + G-1..G-4 parked for CTX-0003"
