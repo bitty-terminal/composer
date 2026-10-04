@@ -39,6 +39,54 @@ import {
 
 const runs: ComposerRun[] = [];
 
+/**
+ * Minimal `>=`/`<` comma-clause evaluator for `compat.bitty` (W-103 D1,
+ * DEC-0001). The mock host only enforces the Plugin API range, so this
+ * helper asserts the host-version range directly: every clause must hold,
+ * missing MINOR/PATCH default to 0, and anything outside the grammar fails
+ * closed.
+ */
+function parseDotted(raw: string): [number, number, number] | undefined {
+  const parts = raw.trim().split(".");
+  if (parts.length < 1 || parts.length > 3) return undefined;
+  const nums: number[] = [];
+  for (const part of parts) {
+    if (!/^\d+$/.test(part)) return undefined;
+    const num = Number(part);
+    if (!Number.isSafeInteger(num)) return undefined;
+    nums.push(num);
+  }
+  while (nums.length < 3) nums.push(0);
+  return [nums[0] as number, nums[1] as number, nums[2] as number];
+}
+
+function compareDotted(
+  a: readonly [number, number, number],
+  b: readonly [number, number, number],
+): number {
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
+  }
+  return 0;
+}
+
+function rangeAdmits(range: string, version: string): boolean {
+  const actual = parseDotted(version);
+  if (actual === undefined) return false;
+  const clauses = range.split(",");
+  if (clauses.length === 0) return false;
+  for (const clause of clauses) {
+    const match = clause.trim().match(/^(>=|<)(\d+(?:\.\d+){0,2})$/);
+    if (match === null) return false;
+    const bound = parseDotted(match[2] as string);
+    if (bound === undefined) return false;
+    const order = compareDotted(actual, bound);
+    if (match[1] === ">=" && order < 0) return false;
+    if (match[1] === "<" && order >= 0) return false;
+  }
+  return true;
+}
+
 async function composer(
   ...args: Parameters<typeof activateComposer>
 ): Promise<ComposerRun> {
@@ -77,6 +125,16 @@ describe("manifest", () => {
     expect([...COMPOSER_CAPABILITIES].sort()).toEqual(
       ["process.editor", "terminal.input.submit", "ui.overlay.focus"].sort(),
     );
+  });
+
+  test("compat.bitty admits the verified host 0.0.21 (W-103 D1)", () => {
+    const match = MANIFEST_SOURCE.match(/^\s*bitty\s*=\s*"([^"]+)"\s*$/m);
+    expect(match?.[1]).toBe(">=0.0.21,<0.1");
+    expect(rangeAdmits(match?.[1] ?? "", "0.0.21")).toBe(true);
+    expect(rangeAdmits(match?.[1] ?? "", "0.0.20")).toBe(false);
+    expect(rangeAdmits(match?.[1] ?? "", "0.1.0")).toBe(false);
+    // Fail-closed evidence: the previous aspirational floor refused the host.
+    expect(rangeAdmits(">=0.5,<1.0", "0.0.21")).toBe(false);
   });
 });
 
