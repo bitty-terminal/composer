@@ -173,6 +173,57 @@ describe("pure policy without a host", () => {
       lua.global.close();
     }
   });
+
+  test("chord parsing trims portably incl. edge cases (W-103 D2)", async () => {
+    const factory = new LuaFactory();
+    const lua = await factory.createEngine({ injectObjects: false });
+    try {
+      await lua.doString(ENTRY_SOURCE);
+      // No-space baseline parses.
+      expect(
+        await lua.doString(
+          "return (function() local chord = composer.parse_chord('ctrl+enter') return chord.key end)()",
+        ),
+      ).toBe("enter");
+      // Leading/trailing whitespace is trimmed.
+      expect(
+        await lua.doString(
+          "return (function() local chord = composer.parse_chord('  ctrl+enter  ') return chord.key end)()",
+        ),
+      ).toBe("enter");
+      // Whitespace around '+' is trimmed.
+      expect(
+        await lua.doString(
+          "return (function() local chord = composer.parse_chord('ctrl + enter') return chord.key end)()",
+        ),
+      ).toBe("enter");
+      // Empty input fails closed with a reason, never a throw.
+      expect(
+        await lua.doString(
+          "return (function() local _, err = composer.parse_chord('') return err end)()",
+        ),
+      ).toMatch(/must not be empty/);
+      // All-space input trims to empty and fails closed the same way.
+      expect(
+        await lua.doString(
+          "return (function() local _, err = composer.parse_chord('   ') return err end)()",
+        ),
+      ).toMatch(/must not be empty/);
+      // The open-chord path shares the same trim.
+      expect(
+        await lua.doString(
+          "return (function() local chord = composer.parse_open_chord('  alt+e  ') return chord.key end)()",
+        ),
+      ).toBe("e");
+      expect(
+        await lua.doString(
+          "return (function() local _, err = composer.parse_open_chord('   ') return err end)()",
+        ),
+      ).toMatch(/must not be empty/);
+    } finally {
+      lua.global.close();
+    }
+  });
 });
 
 describe("T-9 lifecycle over the public overlay + capture API", () => {

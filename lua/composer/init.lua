@@ -90,8 +90,14 @@ local KEY_ALIASES = {
 
 local MOD_ORDER = { "ctrl", "alt", "shift", "super" }
 
+-- Portable trim: two anchored gsub passes. The single-pattern form with a
+-- non-greedy inner capture needs pattern backtracking and returns nil on
+-- the phodopus engine (W-103 D2), which then throws on `#text` at
+-- activation. Anchored greedy runs need no backtracking on any engine.
 local function trim(s)
-  return string.match(s, "^%s*(.-)%s*$")
+  local stripped = string.gsub(s, "^%s+", "")
+  stripped = string.gsub(stripped, "%s+$", "")
+  return stripped
 end
 
 local function is_single_graphic(token)
