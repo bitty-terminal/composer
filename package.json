@@ -1,0 +1,13 @@
+{
+  "name": "bitty-terminal.composer",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Composer command-line policy over the public overlay, submit, and editor host APIs.",
+  "packageManager": "bun@1.4.2",
+  "devDependencies": {
+    "bitty-plugin-sdk": "github:bitty-terminal/bitty-plugin-sdk#d5d117d3d97e22254f3947d7415eb976877940c7",
+    "luaparse": "0.3.1",
+    "wasmoon": "1.16.0"
+  }
+}
