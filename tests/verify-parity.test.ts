@@ -15,8 +15,9 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { lintManifestSource, MockHost } from "bitty-plugin-sdk";
@@ -51,6 +52,74 @@ async function verify(
 
 afterEach(() => {
   for (const run of runs.splice(0)) run.close();
+});
+
+/**
+ * Fail-soft gate: every parity row below runs hermetic against the SDK mock
+ * (Core behavior is cited at bitty@1df0459e, never read from disk), so the
+ * suite is already green without a Core checkout. The probe below still
+ * resolves Core via BITTY_WORKSPACE (or the relative workspace fallback,
+ * never a hardcoded path) and skips with an explicit notice when no checkout
+ * is present — unblocking the plugins CI job
+ * (bitty-terminal/bitty-plugins#73) which has no `bitty` alongside. With
+ * BITTY_WORKSPACE pointed at a real workspace the probe executes (proves the
+ * skip never masks a real run).
+ */
+const HERE = fileURLToPath(new URL(".", import.meta.url));
+const REPO_ROOT = dirname(HERE);
+
+function workspaceRoot(): string {
+  const fromEnv = process.env.BITTY_WORKSPACE;
+  if (fromEnv !== undefined && fromEnv !== "") return fromEnv;
+  return resolve(REPO_ROOT, "..", "..", "..", "..", "..");
+}
+
+function coreFile(...parts: string[]): string {
+  return join(workspaceRoot(), "bitty", ...parts);
+}
+
+function coreExists(path: string): boolean {
+  try {
+    return existsSync(coreFile(path));
+  } catch {
+    return false;
+  }
+}
+
+function coreDir(): string {
+  return coreFile("");
+}
+
+function freshExists(path: string): boolean {
+  const rel = path.split("/").join("/");
+  try {
+    execFileSync(
+      "git",
+      ["-C", coreDir(), "cat-file", "-e", `origin/main:${rel}`],
+      { stdio: "ignore" },
+    );
+    return true;
+  } catch {
+    return coreExists(path);
+  }
+}
+
+const EDITOR_HOST = join("crates", "bitty-terminal", "src", "editor_host.rs");
+
+const CORE_PRESENT = freshExists(EDITOR_HOST);
+
+if (!CORE_PRESENT) {
+  console.log(
+    `live Core not present at ${coreDir()} ` +
+      `(BITTY_WORKSPACE=${process.env.BITTY_WORKSPACE ?? "(unset, relative fallback)"}); ` +
+      `skipping live-identity probe, mock-pinned assertions still run`,
+  );
+}
+
+describe.skipIf(!CORE_PRESENT)("live Core presence (fail-soft probe)", () => {
+  test("Core editor host exists at the pinned surface", () => {
+    expect(freshExists(EDITOR_HOST)).toBe(true);
+  });
 });
 
 const MAX_BYTES = 64 * 1024;
