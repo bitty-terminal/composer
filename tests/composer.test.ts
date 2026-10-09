@@ -224,6 +224,47 @@ describe("pure policy without a host", () => {
       lua.global.close();
     }
   });
+
+  test("activation survives phodopus nil-trim (composer#12)", async () => {
+    const factory = new LuaFactory();
+    const lua = await factory.createEngine({ injectObjects: false });
+    try {
+      // Emulate the phodopus engine (W-103 D2): the single-pattern
+      // non-greedy trim returns nil where wasmoon returns the string.
+      // The portable gsub trim must not depend on that pattern.
+      await lua.doString(`
+        local orig_match = string.match
+        string.match = function(s, pattern, init)
+          if pattern == "^%s*(.-)%s*$" and type(s) == "string" then
+            return nil
+          end
+          return orig_match(s, pattern, init)
+        end
+      `);
+      await lua.doString(ENTRY_SOURCE);
+      expect(
+        await lua.doString(
+          "return (function() local chord = composer.parse_chord('  ctrl+enter  ') return chord.key end)()",
+        ),
+      ).toBe("enter");
+      expect(
+        await lua.doString(
+          "return (function() local chord = composer.parse_open_chord('  alt+e  ') return chord.key end)()",
+        ),
+      ).toBe("e");
+    } finally {
+      lua.global.close();
+    }
+  });
+
+  test("headless top-level activation uses nil-settings defaults (composer#12)", async () => {
+    const run = await composer();
+    dispatch(run, OPEN_COMMAND);
+    expect(await isOpen(run)).toBe(true);
+    dispatch(run, CLOSE_COMMAND);
+    expect(await isOpen(run)).toBe(false);
+    expect(await lastCode(run)).toBe("CLOSED");
+  });
 });
 
 describe("T-9 lifecycle over the public overlay + capture API", () => {
