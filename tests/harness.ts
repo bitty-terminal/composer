@@ -55,6 +55,12 @@ export interface ComposerRunOptions {
   readonly safeMode?: boolean;
   readonly submitBudgetBytes?: number;
   readonly pluginApiVersion?: string;
+  /** Degraded host: drop `bitty.ui.overlay` before activation (pre-W-01 bridge). */
+  readonly noOverlayTable?: boolean;
+  /** Degraded host: drop `bitty.terminal.submit` before activation. */
+  readonly noSubmitSurface?: boolean;
+  /** Degraded host: drop `bitty.process.editor` before activation. */
+  readonly noEditorSurface?: boolean;
 }
 
 const factory = new LuaFactory();
@@ -103,6 +109,19 @@ export async function activateComposer(
   });
   for (const capability of options.grants ?? COMPOSER_CAPABILITIES) {
     host.grant(capability);
+  }
+  if (options.noOverlayTable === true) {
+    delete (host.bitty as unknown as { ui: Record<string, unknown> }).ui[
+      "overlay"
+    ];
+  }
+  if (options.noSubmitSurface === true) {
+    delete (host.bitty as unknown as { terminal: Record<string, unknown> })
+      .terminal["submit"];
+  }
+  if (options.noEditorSurface === true) {
+    delete (host.bitty as unknown as { process: Record<string, unknown> })
+      .process["editor"];
   }
   host.beginActivation();
   for (const [key, value] of Object.entries(options.settings ?? {})) {
@@ -173,6 +192,59 @@ export async function typeText(run: ComposerRun, text: string): Promise<void> {
 export async function paste(run: ComposerRun, text: string): Promise<void> {
   run.host.injectOverlayInput({ type: "paste", data: { text } });
   await pump(run);
+}
+
+/**
+ * Read the mock's retained overlay session scene: exactly what the last
+ * session-owned update painted. Test-only access to mock internals (the
+ * mock owns the contract surface); `undefined` when no session is live.
+ */
+export function sessionScene(run: ComposerRun): unknown {
+  const session = (
+    run.host as unknown as { overlaySession?: { scene?: unknown } }
+  ).overlaySession;
+  return session?.scene;
+}
+
+/**
+ * Read the mock's retained acquire spec (title/placeholder passed on open).
+ * `undefined` when no session is live.
+ */
+export function sessionSpec(run: ComposerRun): unknown {
+  const session = (
+    run.host as unknown as { overlaySession?: { spec?: unknown } }
+  ).overlaySession;
+  return session?.spec;
+}
+
+/**
+ * Inject one production-flat overlay input event (`{seq,type,text}` with no
+ * `data` envelope, the shape the Rust bridge serves) directly into the
+ * live session queue without draining. A call with no live session is a
+ * no-op, mirroring the mock's input routing.
+ */
+export function injectFlat(
+  run: ComposerRun,
+  event: { readonly type: string; readonly text?: string },
+): void {
+  const session = (
+    run.host as unknown as {
+      overlaySession?: { queue: unknown[]; nextSeq: number };
+    }
+  ).overlaySession;
+  if (session === undefined) return;
+  const seq = session.nextSeq;
+  session.nextSeq = seq + 1;
+  session.queue.push(
+    event.text === undefined
+      ? { seq, type: event.type }
+      : { seq, type: event.type, text: event.text },
+  );
+}
+
+/** Publish a focus transition to the plugin (payload per the mock v1 shape). */
+export function publishFocus(run: ComposerRun, viewId = 1): void {
+  run.host.publish("focus.changed", { view_id: viewId });
 }
 
 /** Scalar state readers (plain values, no table conversion). */

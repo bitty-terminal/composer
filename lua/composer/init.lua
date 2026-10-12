@@ -25,9 +25,9 @@
 --
 -- The host never calls into the plugin on the input path (P0-AC-015). The
 -- plugin drains already-queued capture events through `composer.pump()`, an
--- owner-initiated synchronous read the host tick (or the tests) invoke. Feed
--- while closed fails closed with NOT_OPEN: those bytes belong to the PTY and
--- the plugin touches nothing.
+-- owner-initiated synchronous read the session verbs, the focus handler, and
+-- operators invoke. Feed while closed fails closed with NOT_OPEN: those
+-- bytes belong to the PTY and the plugin touches nothing.
 
 local M = {}
 
@@ -417,6 +417,12 @@ end
 M.PREVIEW_MAX_BYTES = 4000
 M.PREVIEW_MARKER = "[...]"
 
+-- Open-scene chrome (bitty#1972, palette #1971 pattern): the surfaced overlay
+-- always paints a non-empty titled scene, never a bare pill. Row one names
+-- the modal; row two is the input line (bounded buffer tail) or the entry
+-- hint while the buffer is empty.
+M.SCENE_TITLE = "Composer"
+
 local function preview_text()
   local text = session.buffer.text
   local tail_keep = M.PREVIEW_MAX_BYTES - #M.PREVIEW_MARKER
@@ -426,6 +432,37 @@ local function preview_text()
   return text
 end
 
+local function placeholder_text()
+  return "Type a command (" .. M.chord_canonical(session.keys.submit) .. " submits)"
+end
+
+local function scene_line()
+  if session.buffer.text == "" then
+    return placeholder_text()
+  end
+  return preview_text()
+end
+
+-- The W-01 capture table, or nil on a host that predates it (palette #1971
+-- pattern: checked on every use, never cached, so a mid-generation bridge
+-- change cannot wedge the session path; a missing table degrades instead of
+-- throwing outside a pcall). Presence uses nil comparison only: like `bitty`
+-- itself, injected host values may arrive as engine userdata, where type()
+-- is not a table check.
+local function overlay_table()
+  if bitty == nil then
+    return nil
+  end
+  if bitty.ui == nil then
+    return nil
+  end
+  local overlay = bitty.ui.overlay
+  if overlay == nil then
+    return nil
+  end
+  return overlay
+end
+
 local function release_session(reason)
   local handle = session.handle
   session.open = false
@@ -433,14 +470,29 @@ local function release_session(reason)
   if handle ~= nil then
     -- Idempotent on an already-released handle; Core-reported reasons
     -- overwrite on involuntary terminal causes. Failure here cannot strand
-    -- capture: release is Core-guaranteed.
-    pcall(bitty.ui.overlay.release, handle, reason)
+    -- capture: release is Core-guaranteed. Without the capture table there
+    -- is no host call to make; local state still clears.
+    local ui_overlay = overlay_table()
+    if ui_overlay ~= nil then
+      pcall(ui_overlay.release, handle, reason)
+    end
   end
 end
 
 local function paint()
-  local scene = { kind = "Text", text = preview_text() }
-  local ok, err = pcall(bitty.ui.overlay.update, session.handle, scene)
+  local ui_overlay = overlay_table()
+  if ui_overlay == nil then
+    -- No capture surface (host predates W-01): never leave a
+    -- half-presented modal behind; local state still clears.
+    release_session("cancelled")
+    note("E_UI_UNAVAILABLE", "overlay update failed; session closed")
+    return false
+  end
+  local scene = { kind = "List", children = {
+    { kind = "Text", text = M.SCENE_TITLE },
+    { kind = "Text", text = scene_line() },
+  } }
+  local ok, err = pcall(ui_overlay.update, session.handle, scene)
   if not ok then
     -- Fail closed: never leave a half-presented modal behind.
     release_session("cancelled")
@@ -486,12 +538,22 @@ function M.open_now()
     return false, M.CODE_DISABLED
   end
   if session.open then
+    -- Re-open while open drains stranded capture and repaints (the scene
+    -- then shows typed input); the session itself is unchanged.
+    M.pump()
+    if not session.open then
+      return false, session.last_code
+    end
     note("ALREADY_OPEN", "session already holds capture")
     return false, "ALREADY_OPEN"
   end
-  local submit_canon = M.chord_canonical(session.keys.submit)
-  local ok, handle = pcall(bitty.ui.overlay.acquire,
-    { title = "Composer", placeholder = "Type a command (" .. submit_canon .. " submits)" })
+  local ui_overlay = overlay_table()
+  if ui_overlay == nil then
+    note("E_UI_UNAVAILABLE", "overlay capture unavailable; session stays closed")
+    return false, session.last_code
+  end
+  local ok, handle = pcall(ui_overlay.acquire,
+    { title = M.SCENE_TITLE, placeholder = placeholder_text() })
   if not ok then
     note(host_code(handle), "overlay acquire failed; session stays closed")
     return false, session.last_code
@@ -506,6 +568,66 @@ function M.open_now()
   return true
 end
 
+-- Owner-initiated drain before a session verb acts (bitty#1972): queued
+-- capture input stranded between the queue and the buffer (the host never
+-- calls into the plugin on the input path, P0-AC-015) is fed first, so no
+-- typed input is lost behind a verb. Cold-path only; bounded by the single
+-- over-limit rule. A drain that observes an involuntary release closes the
+-- session and keeps the draft; the verb then reports the recorded release
+-- instead of overwriting it with NOT_OPEN.
+local function drain_before_verb()
+  if session.open then
+    M.pump()
+  end
+  if session.open then
+    return true
+  end
+  if session.last_code ~= "RELEASED" then
+    note(M.CODE_NOT_OPEN, "no session; bytes belong to the PTY")
+  end
+  return false
+end
+
+-- Controlled PTY submission surface, or nil on a host that does not serve
+-- `bitty.terminal.submit` (checked on every use, never cached). A missing
+-- surface fails closed with the buffer kept and the session open, never a
+-- throw outside a pcall. Presence uses nil comparison only (see
+-- `overlay_table`): a non-callable value still fails closed inside the
+-- guarded call below.
+local function submit_surface()
+  if bitty == nil then
+    return nil
+  end
+  if bitty.terminal == nil then
+    return nil
+  end
+  local submit = bitty.terminal.submit
+  if submit == nil then
+    return nil
+  end
+  return submit
+end
+
+-- Allowlisted editor surface, or nil on a host that does not serve
+-- `bitty.process.editor.start`. Same fail-closed discipline as above.
+local function editor_surface()
+  if bitty == nil then
+    return nil
+  end
+  if bitty.process == nil then
+    return nil
+  end
+  local editor = bitty.process.editor
+  if editor == nil then
+    return nil
+  end
+  local start = editor.start
+  if start == nil then
+    return nil
+  end
+  return start
+end
+
 -- Submit through the controlled PTY path. Clears the buffer only after the
 -- host reports accepted; any denial or unavailability leaves the buffer and
 -- the open session intact and emits nothing.
@@ -516,11 +638,15 @@ function M.submit_now()
   if M.disabled then
     return false, M.CODE_DISABLED
   end
-  if not session.open then
-    note(M.CODE_NOT_OPEN, "no session; bytes belong to the PTY")
-    return false, M.CODE_NOT_OPEN
+  if not drain_before_verb() then
+    return false, session.last_code
   end
-  local ok, outcome = pcall(bitty.terminal.submit, session.buffer.text)
+  local submit = submit_surface()
+  if submit == nil then
+    note("unavailable:no-submit", "submit unavailable on this host; buffer kept, session stays open")
+    return false, session.last_code
+  end
+  local ok, outcome = pcall(submit, session.buffer.text)
   if not ok then
     note(host_code(outcome), "submit call failed; buffer kept")
     return false, session.last_code
@@ -544,9 +670,8 @@ function M.cancel_now()
   if M.disabled then
     return false, M.CODE_DISABLED
   end
-  if not session.open then
-    note(M.CODE_NOT_OPEN, "no session; bytes belong to the PTY")
-    return false, M.CODE_NOT_OPEN
+  if not drain_before_verb() then
+    return false, session.last_code
   end
   M.buffer_clear(session.buffer)
   release_session("cancelled")
@@ -563,9 +688,8 @@ function M.close_now()
   if M.disabled then
     return false, M.CODE_DISABLED
   end
-  if not session.open then
-    note(M.CODE_NOT_OPEN, "no session; bytes belong to the PTY")
-    return false, M.CODE_NOT_OPEN
+  if not drain_before_verb() then
+    return false, session.last_code
   end
   release_session("cancelled")
   note("CLOSED", "draft preserved")
@@ -583,9 +707,8 @@ function M.editor_now(timeout_ms)
   if M.disabled then
     return false, M.CODE_DISABLED
   end
-  if not session.open then
-    note(M.CODE_NOT_OPEN, "no session; bytes belong to the PTY")
-    return false, M.CODE_NOT_OPEN
+  if not drain_before_verb() then
+    return false, session.last_code
   end
   local timeout = M.EDITOR_TIMEOUT_DEFAULT_MS
   if type(timeout_ms) == "number" and timeout_ms >= 1 then
@@ -594,7 +717,12 @@ function M.editor_now(timeout_ms)
       timeout = M.EDITOR_TIMEOUT_MAX_MS
     end
   end
-  local ok, outcome = pcall(bitty.process.editor.start,
+  local editor_start = editor_surface()
+  if editor_start == nil then
+    note("unavailable:no-editor", "editor unavailable on this host; draft kept")
+    return false, session.last_code
+  end
+  local ok, outcome = pcall(editor_start,
     { draft = session.buffer.text, timeout_ms = timeout })
   if not ok then
     note(host_code(outcome), "editor call failed; draft kept")
@@ -618,7 +746,54 @@ function M.editor_now(timeout_ms)
   return false, code
 end
 
--- Normalizes one captured key payload to a chord for role matching.
+-- Reads the carried text of a text/paste event across both host shapes:
+-- the mock/spec envelope `{type, data = {text}}` and the production flat
+-- envelope `{seq, type, text}` (bitty#1972: the Rust bridge serves the flat
+-- shape, so a data-only reader strands all headed input). Nil when neither
+-- shape carries a string.
+local function event_text(ev)
+  -- `data` indexes directly with no container type check: injected host
+  -- values may arrive as engine userdata, where type() is not a table check
+  -- but field access works.
+  local data = ev.data
+  if data ~= nil and type(data.text) == "string" then
+    return data.text
+  end
+  if type(ev.text) == "string" then
+    return ev.text
+  end
+  return nil
+end
+
+-- Parses one production flat key label (`{type = "key", text = ...}`) to a
+-- chord for role matching. The bridge carries produced text literally or a
+-- `key:Name` label; field-level modifier encodings stay parked with the
+-- input-pointer contract owner, so a flat label never matches a modified
+-- role (the explicit session commands stay the exact path). Returns the
+-- chord, the string "literal" for produced text (the caller inserts it), or
+-- nil for unmapped labels.
+local function flat_key_shape(text)
+  if type(text) ~= "string" or text == "" then
+    return nil
+  end
+  if string.sub(text, 1, 4) ~= "key:" then
+    return "literal"
+  end
+  local name = string.lower(string.sub(text, 5))
+  name = KEY_ALIASES[name] or name
+  if name == "enter" or name == "escape" then
+    return { key = name, ctrl = false, alt = false, shift = false, super = false }
+  end
+  return nil
+end
+
+-- Feeds one captured key press while open. Role precedence is submit-first
+-- (composer.rs ComposerSession::feed: submit, close, external-editor,
+-- newline, then text); distinctness validation at activation makes a double
+-- match impossible by construction. Unmatched presses are swallowed: the
+-- buffer is untouched and the session stays open, and nothing reaches the
+-- PTY through this plugin.
+-- Normalizes one mock/spec key payload to a chord for role matching.
 local function key_payload_chord(data)
   if data == nil or type(data.key) ~= "string" then
     return nil
@@ -637,17 +812,13 @@ local function key_payload_chord(data)
   }
 end
 
--- Feeds one captured key press while open. Role precedence is submit-first
--- (composer.rs ComposerSession::feed: submit, close, external-editor,
--- newline, then text); distinctness validation at activation makes a double
--- match impossible by construction. Unmatched presses are swallowed: the
--- buffer is untouched and the session stays open, and nothing reaches the
--- PTY through this plugin.
-local function feed_key(data)
-  local chord = key_payload_chord(data)
-  if chord == nil then
-    return "ignored"
-  end
+-- Routes one normalized chord through the modal roles. Role precedence is
+-- submit-first (composer.rs ComposerSession::feed: submit, close,
+-- external-editor, newline, then text); distinctness validation at
+-- activation makes a double match impossible by construction. Unmatched
+-- chords are swallowed: the buffer is untouched and the session stays open,
+-- and nothing reaches the PTY through this plugin.
+local function dispatch_chord(chord)
   local canon = M.chord_canonical(chord)
   if canon == M.chord_canonical(session.keys.submit) then
     local ok = M.submit_now()
@@ -676,21 +847,56 @@ local function feed_key(data)
   return "ignored"
 end
 
+-- Feeds one mock/spec captured key press while open (chord in `data`).
+local function feed_key(data)
+  local chord = key_payload_chord(data)
+  if chord == nil then
+    return "ignored"
+  end
+  return dispatch_chord(chord)
+end
+
+-- Feeds one production flat captured key press while open
+-- (`{type = "key", text = ...}`). Produced text inserts bounded like typed
+-- input; `key:Enter`/`key:Escape` labels route through the modal roles;
+-- every other label is swallowed.
+local function feed_flat_key(text)
+  local shape = flat_key_shape(text)
+  if shape == "literal" then
+    local ok = M.buffer_insert(session.buffer, text)
+    if not ok then
+      note("rejected:too-large", "key text over cap; buffer kept")
+      return "too-large"
+    end
+    paint()
+    return "inserted"
+  end
+  if shape == nil then
+    return "ignored"
+  end
+  return dispatch_chord(shape)
+end
+
 -- Feeds one captured event while open. Typing and paste share the single
--- over-limit rule: rejection keeps the prior buffer intact.
+-- over-limit rule: rejection keeps the prior buffer intact. Key events
+-- arrive mock-shaped (`data` chord) or production-flat (`text` literal or
+-- label); text/paste events arrive in either text envelope.
 local function feed_event(ev)
   if ev == nil then
     return "ignored"
   end
   if ev.type == "key" then
-    return feed_key(ev.data)
+    if ev.data ~= nil then
+      return feed_key(ev.data)
+    end
+    return feed_flat_key(ev.text)
   end
   if ev.type == "text" or ev.type == "paste" then
-    local data = ev.data
-    if data == nil or type(data.text) ~= "string" then
+    local text = event_text(ev)
+    if text == nil then
       return "ignored"
     end
-    local ok = M.buffer_insert(session.buffer, data.text)
+    local ok = M.buffer_insert(session.buffer, text)
     if not ok then
       note("rejected:too-large", ev.type .. " over cap; buffer kept")
       return "too-large"
@@ -702,10 +908,11 @@ local function feed_event(ev)
 end
 
 -- Owner-initiated drain of already-queued capture events. Never a Core-driven
--- callback and never on the input hot path: the host tick invokes this, and
--- each queued event routes through the modal feed above. Ends early when the
--- session closes mid-drain (submit/close); leftover queue entries belong to
--- a released session and are never delivered to the terminal by this plugin.
+-- callback and never on the input hot path: session verbs, the focus handler,
+-- and operators invoke this, and each queued event routes through the modal
+-- feed above. Ends early when the session closes mid-drain (submit/close);
+-- leftover queue entries belong to a released session and are never delivered
+-- to the terminal by this plugin.
 function M.pump()
   if not has_host() then
     return false, NO_HOST
@@ -718,7 +925,16 @@ function M.pump()
     -- observer-recorded release reason survives a trailing pump.
     return false, M.CODE_NOT_OPEN
   end
-  local ok, poll = pcall(bitty.ui.overlay.poll, session.handle)
+  local ui_overlay = overlay_table()
+  if ui_overlay == nil then
+    -- Host predates W-01 (or the bridge went away mid-session): drop the
+    -- session, keep the draft, never touch the PTY.
+    session.open = false
+    session.handle = nil
+    note("E_UI_UNAVAILABLE", "poll unavailable; session dropped, draft kept")
+    return false, session.last_code
+  end
+  local ok, poll = pcall(ui_overlay.poll, session.handle)
   if not ok then
     -- Stale or foreign handle (e.g. new generation): drop the session,
     -- keep the draft, never touch the PTY.
@@ -924,6 +1140,18 @@ do
     session.open = false
     session.handle = nil
     note("RELEASED", reason)
+  end)
+
+  -- Cold-path drain while open (palette #1971 pattern): focus transitions
+  -- around the modal (window focus, workspace moves) are the moments queued
+  -- input is most likely stranded, so a focus change drains and repaints.
+  -- `M.pump()` is fully guarded: on a revoked session it records RELEASED
+  -- and keeps the draft, and while closed this handler does nothing, so a
+  -- trailing focus event can never overwrite the recorded release.
+  bitty.events.subscribe("focus.changed", function(_event)
+    if session.open then
+      M.pump()
+    end
   end)
 end
 

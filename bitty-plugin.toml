@@ -58,4 +58,9 @@ commands = [
 ]
 events = [
   "overlay.released",
+  # Cold-path input drain + repaint while open (bitty#1972): focus
+  # transitions around the modal are the moments queued capture input is
+  # most likely stranded. Observation only; a revoked session records
+  # RELEASED with the draft kept.
+  "focus.changed",
 ]

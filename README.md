@@ -11,13 +11,18 @@ bitty-terminal-docs); the SDK binding is bitty-plugin-sdk at `d5d117d`.
   compat `bitty >=0.5,<1.0` with `plugin-api ^1.0`, exactly three
   capabilities (`ui.overlay.focus`, `terminal.input.submit`,
   `process.editor`), lazy `open`/`submit`/`cancel`/`close`/`editor` commands
-  and the `overlay.released` event.
+  and the `overlay.released` + `focus.changed` events.
 - `lua/composer/init.lua`: the whole policy. `CommandBuffer` presentation
   state (never Terminal Truth), the key-chord vocabulary with defaults and
   remapping, the modal session state machine, and the open/submit/cancel/
   close/editor lifecycle over the overlay, capture, submit, and editor host
   operations. Manual open only; while closed, input bytes flow to the PTY and
-  the plugin touches nothing.
+  the plugin touches nothing. Every open acquires the focusable overlay plus
+  transient input capture from a title/placeholder spec and paints the
+  non-empty titled scene (title row plus the input line, or the entry hint
+  while the buffer is empty); involuntary session ends observed through
+  `overlay.released` keep the draft and close the session, and `focus.changed`
+  drains stranded capture plus repaints while open.
 - `tests/`: bun + wasmoon suite against the SDK `MockHost`, mirroring the
   bar plugin harness pattern. Covers W-103 T-9 (lifecycle, modal precedence,
   no-PTTY-byte-leak), T-10 (over-cap fail-closed), and T-11 (mismatch
@@ -40,8 +45,9 @@ bitty-terminal-docs); the SDK binding is bitty-plugin-sdk at `d5d117d`.
   activation: no commands, no keymap, no events, no overlay.
 - Bounds mirror Core/W-82: 64 KiB buffer cap; editor wait defaults to 120 s
   and clamps to the 300 s ceiling as documented behavior enforced by the
-  host. The overlay shows a bounded 4000-byte tail preview under the host
-  per-update ceiling; the buffer itself is never preview-truncated.
+  host. The overlay paints the titled scene (title row plus the input line)
+  with a bounded 4000-byte tail preview under the host per-update ceiling;
+  the buffer itself is never preview-truncated.
 
 ## Non-goals (S-3 only)
 
@@ -50,7 +56,13 @@ bitty-terminal-docs); the SDK binding is bitty-plugin-sdk at `d5d117d`.
   CTX-0004 independently verifies temp cleanup, process, paste, and
   cancellation evidence plus Core W-103 parity.
 - No second input channel: the plugin registers no hot-path callback and
-  drains capture through the owner-initiated `composer.pump()` tick.
+  drains capture through the owner-initiated `composer.pump()` tick. Every
+  session verb drains stranded capture before acting, and `focus.changed`
+  drains plus repaints while open; the poll feed accepts both the spec
+  envelope and the production flat event shape. Field-level key-modifier
+  encodings stay parked with the host contract owner, so flat modified
+  chords degrade to their bare key and the explicit session commands stay
+  the exact path.
 
 ## Compat
 
