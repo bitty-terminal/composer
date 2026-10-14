@@ -267,6 +267,99 @@ describe("pure policy without a host", () => {
   });
 });
 
+describe("composer#18 undeclared-settings fail-to-default", () => {
+  test("registration survives a throwing settings.get (E_SETTINGS_UNDECLARED)", async () => {
+    // Strict-host shape (bitty#2010 / CTX-1195): reading an undeclared key
+    // fails closed instead of returning nil. The registration-time read
+    // must fall back to shipped defaults, never abort activation.
+    const factory = new LuaFactory();
+    const lua = await factory.createEngine({ injectObjects: false });
+    try {
+      const seen: string[] = [];
+      lua.global.set("bitty", {
+        api_version: "1.0.0",
+        settings: {
+          get: () => {
+            throw new Error(
+              "E_SETTINGS_UNDECLARED: settings key 'newline' is not declared",
+            );
+          },
+          set: () => true,
+        },
+        commands: {
+          register: () => {
+            seen.push("register");
+            return 1;
+          },
+        },
+        events: {
+          subscribe: () => {
+            seen.push("subscribe");
+            return 1;
+          },
+        },
+        keymaps: {
+          suggest: () => {
+            seen.push("suggest");
+            return 1;
+          },
+        },
+      });
+      await lua.doString(ENTRY_SOURCE);
+      expect(await lua.doString("return composer.disabled")).toBe(false);
+      expect(seen.filter((entry) => entry === "register")).toHaveLength(5);
+      expect(seen.filter((entry) => entry === "subscribe")).toHaveLength(3);
+      expect(seen.filter((entry) => entry === "suggest")).toHaveLength(1);
+      // Shipped defaults carry the modal: the strict host runs the same
+      // chords the nil-settings mock path uses.
+      expect(await lua.doString("return composer.DEFAULT_KEYS.newline")).toBe(
+        "enter",
+      );
+      expect(await lua.doString("return composer.DEFAULT_KEYS.submit")).toBe(
+        "ctrl+enter",
+      );
+      expect(await lua.doString("return composer.DEFAULT_KEYS.close")).toBe(
+        "escape",
+      );
+      expect(
+        await lua.doString("return composer.DEFAULT_KEYS.external_editor"),
+      ).toBe("alt+e");
+      expect(await lua.doString("return composer.DEFAULT_OPEN_CHORD")).toBe(
+        "alt+e",
+      );
+      expect(await lua.doString("return composer.last_code()")).toBe("ok");
+    } finally {
+      lua.global.close();
+    }
+  });
+
+  test("wrong-typed stored values fail to defaults with KEYS_FALLBACK", async () => {
+    const run = await composer({
+      environment: { VISUAL: "nvim" },
+      settings: { submit: 42, newline: true, open_chord: 7 },
+    });
+    expect(await run.query("composer.last_code()")).toBe("KEYS_FALLBACK");
+    dispatch(run, OPEN_COMMAND);
+    expect(await isOpen(run)).toBe(true);
+    await typeText(run, "x");
+    // Default chords still route; the wrong-typed values never widen
+    // authority or shadow shell typing.
+    await press(run, "enter", { ctrl: true });
+    expect(await lastCode(run)).toBe("SUBMITTED");
+    expect(run.host.submittedFrames).toHaveLength(1);
+  });
+
+  test("manifest carries no [settings] until the SDK linter admits it", () => {
+    // Tripwire for bitty-plugin-sdk#151: the host-required declarations
+    // fail `just manifest` on the current SDK pin, so they stay out until
+    // the pin moves. Remove this test with the SDK bump that adds them.
+    const declared = MANIFEST_SOURCE.split("\n")
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .join("\n");
+    expect(declared).not.toMatch(/^\s*\[settings\]/m);
+  });
+});
+
 describe("T-9 lifecycle over the public overlay + capture API", () => {
   test("open, type, newline, close preserves the draft; reopen repaints it", async () => {
     const run = await composer({ environment: { VISUAL: "nvim" } });

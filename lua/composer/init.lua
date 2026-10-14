@@ -1003,9 +1003,16 @@ do
     return M
   end
 
+  -- Fail-to-default settings read (composer#18, bitty#2010): the host
+  -- fails undeclared keys closed with E_SETTINGS_UNDECLARED, and the SDK
+  -- linter admits no [settings] declarations yet
+  -- (bitty-plugin-sdk#151), so any read error falls back to the shipped
+  -- default instead of aborting activation. Declared-key honoring of user
+  -- configuration follows once the SDK lands [settings] parity; until
+  -- then a strict host runs the defaults below.
   local function setting(key, default)
-    local value = bitty.settings.get(key)
-    if value == nil then
+    local ok, value = pcall(bitty.settings.get, key)
+    if not ok or value == nil then
       return default
     end
     return value
