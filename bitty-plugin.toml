@@ -63,4 +63,9 @@ events = [
   # most likely stranded. Observation only; a revoked session records
   # RELEASED with the draft kept.
   "focus.changed",
+  # Cold-path input drain + repaint while open (bitty#1972): the host raises
+  # this coalescable observation while a modal session is open so queued
+  # capture input is drained and the scene repainted on the cold path.
+  # Observation only; a revoked session records RELEASED with the draft kept.
+  "overlay.input.available",
 ]
