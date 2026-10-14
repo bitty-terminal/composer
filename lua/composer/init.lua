@@ -1153,6 +1153,19 @@ do
       M.pump()
     end
   end)
+
+  -- Cold-path drain while open (bitty#1972 host nudge): the host raises a
+  -- coalescable `overlay.input.available` observation while a modal session
+  -- is open, so queued capture input is drained and the scene repainted on
+  -- the cold path. Mirrors the focus handler's guard: `M.pump()` is fully
+  -- guarded (on a revoked session it records RELEASED and keeps the draft)
+  -- and while closed this handler does nothing, so a trailing nudge can
+  -- never resurrect a released session.
+  bitty.events.subscribe("overlay.input.available", function(_event)
+    if session.open then
+      M.pump()
+    end
+  end)
 end
 
 return M
