@@ -6,7 +6,7 @@
   "description": "Composer command-line policy over the public overlay, submit, and editor host APIs.",
   "packageManager": "bun@1.4.2",
   "devDependencies": {
-    "bitty-plugin-sdk": "github:bitty-terminal/bitty-plugin-sdk#862e29ece36e08d866f5000c1f942603d6df8aca",
+    "bitty-plugin-sdk": "github:bitty-terminal/bitty-plugin-sdk#f6fc2f763aa398c0b9bb33fadfe06f0b86dbc0d2",
     "luaparse": "0.3.1",
     "wasmoon": "1.16.0"
   }

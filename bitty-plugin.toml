@@ -44,6 +44,21 @@ ui.overlay.focus = true
 terminal.input.submit = true
 process.editor = true
 
+[settings]
+# Declared settings keys read through bitty.settings.get at registration
+# (composer#18, bitty#2010 / CTX-1195): the host fails undeclared keys
+# closed with E_SETTINGS_UNDECLARED, so every key init.lua reads is
+# declared here. Types are string; defaults mirror M.DEFAULT_KEYS and
+# M.DEFAULT_OPEN_CHORD in lua/composer/init.lua (Enter newline,
+# Ctrl+Enter submit, Esc close, Alt+E external editor, Alt+E open chord).
+# Shapes per bitty-plugin-sdk#151/#152 (SettingDecl: type/default, key
+# grammar, string default bounds).
+newline = { type = "string", default = "enter" }
+submit = { type = "string", default = "ctrl+enter" }
+close = { type = "string", default = "escape" }
+external_editor = { type = "string", default = "alt+e" }
+open_chord = { type = "string", default = "alt+e" }
+
 [lazy]
 # Static triggers let the host register the plugin without creating a VM.
 # Commands are plugin-qualified: `<plugin-id>:<resource>`. `open` is the

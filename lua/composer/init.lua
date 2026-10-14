@@ -1003,13 +1003,13 @@ do
     return M
   end
 
-  -- Fail-to-default settings read (composer#18, bitty#2010): the host
-  -- fails undeclared keys closed with E_SETTINGS_UNDECLARED, and the SDK
-  -- linter admits no [settings] declarations yet
-  -- (bitty-plugin-sdk#151), so any read error falls back to the shipped
-  -- default instead of aborting activation. Declared-key honoring of user
-  -- configuration follows once the SDK lands [settings] parity; until
-  -- then a strict host runs the defaults below.
+  -- Fail-to-default settings read (composer#18, bitty#2010): any read
+  -- error falls back to the shipped default instead of aborting
+  -- activation, so a settings failure can never kill the modal again.
+  -- The manifest now declares every key below under [settings]
+  -- (bitty-plugin-sdk#151/#152), so a conforming host serves user
+  -- configuration and the mock enforces the declared set; the pcall stays
+  -- as defense in depth for nonconforming or future host failure modes.
   local function setting(key, default)
     local ok, value = pcall(bitty.settings.get, key)
     if not ok or value == nil then
@@ -1036,7 +1036,10 @@ do
   local open_raw = setting("open_chord", M.DEFAULT_OPEN_CHORD)
   local open_chord, open_err = M.parse_open_chord(open_raw)
   if open_chord == nil then
-    open_chord, open_err = M.parse_open_chord(M.DEFAULT_OPEN_CHORD)
+    -- Fall back to the shipped default but keep the original parse error:
+    -- the default always parses (its error return is nil), so assigning
+    -- both returns here would silence the KEYS_FALLBACK note below.
+    open_chord = M.parse_open_chord(M.DEFAULT_OPEN_CHORD)
   end
   -- Recompute the canonical open spelling for the suggestion below.
   local open_canon = M.DEFAULT_OPEN_CHORD

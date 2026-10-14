@@ -12,7 +12,11 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { lintManifestSource, MockHost } from "bitty-plugin-sdk";
+import {
+  lintManifestSource,
+  loadManifestModel,
+  MockHost,
+} from "bitty-plugin-sdk";
 import { LuaFactory } from "wasmoon";
 
 import {
@@ -267,7 +271,39 @@ describe("pure policy without a host", () => {
   });
 });
 
-describe("composer#18 undeclared-settings fail-to-default", () => {
+describe("composer#18 settings: declarations live (SDK#152)", () => {
+  test("manifest declares exactly the five settings keys init.lua reads", () => {
+    // Follow-through on composer#18: the host fails undeclared keys closed
+    // with E_SETTINGS_UNDECLARED, so every key the registration read
+    // touches is declared with the type init.lua consumes (string) and the
+    // shipped default it falls back to (M.DEFAULT_KEYS/M.DEFAULT_OPEN_CHORD).
+    const model = loadManifestModel(MANIFEST_SOURCE);
+    expect(model.hasSettingsTable).toBe(true);
+    expect([...model.settings.keys()].sort()).toEqual(
+      ["close", "external_editor", "newline", "open_chord", "submit"].sort(),
+    );
+    for (const key of [
+      "newline",
+      "submit",
+      "close",
+      "external_editor",
+      "open_chord",
+    ] as const) {
+      expect(model.settings.get(key)?.kind).toBe("string");
+    }
+    expect(
+      Object.fromEntries(
+        [...model.settings.entries()].map(([key, decl]) => [key, decl.default]),
+      ),
+    ).toEqual({
+      newline: "enter",
+      submit: "ctrl+enter",
+      close: "escape",
+      external_editor: "alt+e",
+      open_chord: "alt+e",
+    });
+  });
+
   test("registration survives a throwing settings.get (E_SETTINGS_UNDECLARED)", async () => {
     // Strict-host shape (bitty#2010 / CTX-1195): reading an undeclared key
     // fails closed instead of returning nil. The registration-time read
@@ -333,12 +369,17 @@ describe("composer#18 undeclared-settings fail-to-default", () => {
     }
   });
 
-  test("wrong-typed stored values fail to defaults with KEYS_FALLBACK", async () => {
+  test("wrong-typed stored values fail to defaults with no fallback", async () => {
+    // Declared-keys gate (SDK#152, mirroring the host): a wrong-typed
+    // stored value serves the shipped default at read time instead of
+    // throwing, so activation proceeds with defaults in force and
+    // last_code stays "ok". The pcall guard never fires here;
+    // KEYS_FALLBACK is reserved for well-typed-but-unparseable chords.
     const run = await composer({
       environment: { VISUAL: "nvim" },
       settings: { submit: 42, newline: true, open_chord: 7 },
     });
-    expect(await run.query("composer.last_code()")).toBe("KEYS_FALLBACK");
+    expect(await run.query("composer.last_code()")).toBe("ok");
     dispatch(run, OPEN_COMMAND);
     expect(await isOpen(run)).toBe(true);
     await typeText(run, "x");
@@ -349,14 +390,127 @@ describe("composer#18 undeclared-settings fail-to-default", () => {
     expect(run.host.submittedFrames).toHaveLength(1);
   });
 
-  test("manifest carries no [settings] until the SDK linter admits it", () => {
-    // Tripwire for bitty-plugin-sdk#151: the host-required declarations
-    // fail `just manifest` on the current SDK pin, so they stay out until
-    // the pin moves. Remove this test with the SDK bump that adds them.
-    const declared = MANIFEST_SOURCE.split("\n")
-      .filter((line) => !line.trimStart().startsWith("#"))
-      .join("\n");
-    expect(declared).not.toMatch(/^\s*\[settings\]/m);
+  test("custom values are honored across all five keys", async () => {
+    const settings = {
+      newline: "shift+enter",
+      submit: "enter",
+      close: "alt+c",
+      external_editor: "alt+x",
+      open_chord: "ctrl+o",
+    } as const;
+    const run = await composer({
+      environment: { VISUAL: "nvim" },
+      settings: { ...settings },
+    });
+    // Every custom value parsed: a valid custom open_chord leaves no
+    // KEYS_FALLBACK behind (an unparseable one would record it, proven
+    // in the next test).
+    expect(await run.query("composer.last_code()")).toBe("ok");
+    dispatch(run, OPEN_COMMAND);
+    // Remapped newline inserts; remapped submit submits.
+    await press(run, "enter", { shift: true });
+    expect(await bufferText(run)).toBe("\n");
+    await press(run, "enter");
+    expect(await isOpen(run)).toBe(false);
+    expect(await lastCode(run)).toBe("SUBMITTED");
+    expect(run.host.submittedFrames).toHaveLength(1);
+    expect(run.host.submittedFrames[0]).toEqual(expectedFrame("\n"));
+    // Remapped close preserves the draft; remapped external editor detours.
+    const second = await composer({
+      environment: { VISUAL: "nvim" },
+      settings: { ...settings },
+    });
+    dispatch(second, OPEN_COMMAND);
+    await typeText(second, "draft");
+    await press(second, "c", { alt: true });
+    expect(await isOpen(second)).toBe(false);
+    expect(await lastCode(second)).toBe("CLOSED");
+    expect(await bufferText(second)).toBe("draft");
+    dispatch(second, OPEN_COMMAND);
+    await press(second, "x", { alt: true });
+    // The default mock editor outcome is cancelled; the custom chord
+    // reached the editor detour rather than inserting text.
+    expect(await lastCode(second)).toBe("cancelled");
+    expect(await bufferText(second)).toBe("draft");
+    expect(await isOpen(second)).toBe(true);
+  });
+
+  test("an unparseable custom open_chord falls back with KEYS_FALLBACK", async () => {
+    // Proves open_chord is actually read, not ignored: a bare key cannot
+    // back a suggestion, so activation records the fallback and runs the
+    // shipped default chord instead.
+    const run = await composer({
+      environment: { VISUAL: "nvim" },
+      settings: { open_chord: "e" },
+    });
+    expect(await run.query("composer.last_code()")).toBe("KEYS_FALLBACK");
+    dispatch(run, OPEN_COMMAND);
+    expect(await isOpen(run)).toBe(true);
+    await press(run, "enter", { ctrl: true });
+    expect(await lastCode(run)).toBe("SUBMITTED");
+  });
+
+  test("custom open_chord reaches the keymap suggestion", async () => {
+    // The mock keeps suggestions private, so capture the suggest call with
+    // a hand-rolled host (same pattern as the throwing-get test above):
+    // the suggested chord must equal the configured open_chord, proving
+    // the fifth key is honored end to end and not merely parsed.
+    async function suggestedChord(
+      stored: Record<string, string>,
+    ): Promise<unknown[]> {
+      const factory = new LuaFactory();
+      const lua = await factory.createEngine({ injectObjects: false });
+      try {
+        const suggested: unknown[] = [];
+        lua.global.set("bitty", {
+          api_version: "1.0.0",
+          settings: {
+            get: (key: string) => stored[key] as string | undefined,
+            set: () => true,
+          },
+          commands: {
+            register: () => 1,
+          },
+          events: {
+            subscribe: () => 1,
+          },
+          keymaps: {
+            suggest: (def: unknown) => {
+              suggested.push(def);
+              return 1;
+            },
+          },
+        });
+        await lua.doString(ENTRY_SOURCE);
+        return suggested;
+      } finally {
+        lua.global.close();
+      }
+    }
+    expect(await suggestedChord({ open_chord: "ctrl+o" })).toEqual([
+      { chord: "ctrl+o", command: "bitty-terminal.composer:open" },
+    ]);
+    // Unset serves the shipped default through the same path.
+    expect(await suggestedChord({})).toEqual([
+      { chord: "alt+e", command: "bitty-terminal.composer:open" },
+    ]);
+  });
+
+  test("undeclared keys stay denied with E_SETTINGS_UNDECLARED", () => {
+    // The declared-keys gate arms on table presence: reads AND writes
+    // outside the five declared keys fail closed, so settings can never
+    // become a side channel between plugins.
+    const host = new MockHost({ manifestSource: MANIFEST_SOURCE });
+    host.beginActivation();
+    expect(() => host.bitty.settings.get("unclaimed")).toThrow(
+      /E_SETTINGS_UNDECLARED/,
+    );
+    expect(() => host.bitty.settings.set("unclaimed", "x")).toThrow(
+      /E_SETTINGS_UNDECLARED/,
+    );
+    // Declared keys still read: unset serves the shipped default.
+    expect(host.bitty.settings.get("newline")).toBe("enter");
+    expect(host.bitty.settings.get("open_chord")).toBe("alt+e");
   });
 });
 
