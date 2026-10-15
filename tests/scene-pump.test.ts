@@ -90,6 +90,41 @@ describe("production flat poll shape feeds the buffer", () => {
     expect(run.host.submittedFrames).toEqual([]);
   });
 
+  test("flat CR/LF literals route through the Enter role (composer#21)", async () => {
+    const run = await scenePump({ environment: { VISUAL: "nvim" } });
+    dispatch(run, OPEN_COMMAND);
+    injectFlat(run, { type: "key", text: "x" });
+    await pump(run);
+    expect(await bufferText(run)).toBe("x");
+    // Headed Return arrives as produced text "\r", not as a key:Enter
+    // label: under defaults it must newline exactly like the label path.
+    injectFlat(run, { type: "key", text: "\r" });
+    await pump(run);
+    expect(await bufferText(run)).toBe("x\n");
+    injectFlat(run, { type: "key", text: "\n" });
+    await pump(run);
+    expect(await bufferText(run)).toBe("x\n\n");
+    expect(await isOpen(run)).toBe(true);
+    expect(run.host.submittedFrames).toEqual([]);
+  });
+
+  test("flat CR literal submits under custom enter-submits (composer#21)", async () => {
+    const run = await scenePump({
+      environment: { VISUAL: "nvim" },
+      settings: { submit: "enter", newline: "shift+enter" },
+    });
+    dispatch(run, OPEN_COMMAND);
+    injectFlat(run, { type: "text", text: "CUSTOMSUB42" });
+    await pump(run);
+    injectFlat(run, { type: "key", text: "\r" });
+    await pump(run);
+    expect(await lastCode(run)).toBe("SUBMITTED");
+    expect(await isOpen(run)).toBe(false);
+    expect(await bufferText(run)).toBe("");
+    expect(run.host.submittedFrames).toHaveLength(1);
+    expect(run.host.submittedFrames[0]).toEqual(expectedFrame("CUSTOMSUB42"));
+  });
+
   test("flat key literals insert; key:Enter newlines; other labels swallow", async () => {
     const run = await scenePump({ environment: { VISUAL: "nvim" } });
     dispatch(run, OPEN_COMMAND);

@@ -770,13 +770,24 @@ end
 -- `key:Name` label; field-level modifier encodings stay parked with the
 -- input-pointer contract owner, so a flat label never matches a modified
 -- role (the explicit session commands stay the exact path). Returns the
--- chord, the string "literal" for produced text (the caller inserts it), or
--- nil for unmapped labels.
+-- chord, the string "literal" for produced text (the caller inserts it,
+-- except CR/LF below), or nil for unmapped labels.
 local function flat_key_shape(text)
   if type(text) ~= "string" or text == "" then
     return nil
   end
   if string.sub(text, 1, 4) ~= "key:" then
+    -- Headed Return arrives here, not as a label: both host capture entries
+    -- forward the produced `key.text` verbatim, and Return produces "\r"
+    -- (xkb/winit convention, the same byte the VT encoder emits for Enter).
+    -- A key-event CR/LF can only come from the Enter key itself (typing and
+    -- paste arrive as text/paste events, never key literals), so route it
+    -- through the bare Enter role for parity with the mock-chord and label
+    -- paths; otherwise custom enter-submits can never fire headed
+    -- (composer#21) and defaults silently bank a CR instead of a newline.
+    if text == "\r" or text == "\n" then
+      return { key = "enter", ctrl = false, alt = false, shift = false, super = false }
+    end
     return "literal"
   end
   local name = string.lower(string.sub(text, 5))
