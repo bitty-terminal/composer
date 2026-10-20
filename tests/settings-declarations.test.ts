@@ -7,14 +7,19 @@
  *
  * The declarations themselves are in the manifest. This suite keeps them
  * fixed: the declared key set must equal exactly what registration reads, the
- * kinds and shipped defaults must match the Lua fallbacks, and activation
- * must succeed from an empty settings file and from explicit user values.
+ * kinds and shipped defaults must match the Lua fallbacks, activation must
+ * succeed from an empty settings file and from explicit user values, and the
+ * README configuration table must document exactly the declared keys with
+ * their types and defaults.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 
 import { loadManifestModel } from "bitty-plugin-sdk";
 import { LuaFactory } from "wasmoon";
+
+import { checkReadmeSettings } from "../scripts/check-readme-settings.mjs";
 
 import {
   activateComposer,
@@ -29,6 +34,8 @@ import {
   typeText,
   type ComposerRun,
 } from "./harness.js";
+
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 /** Module-level chord constants registration reads its settings against. */
 interface ComposerModule {
@@ -76,6 +83,10 @@ describe("composer#23 settings declarations match the entry point", () => {
   test("every bitty.settings.get key is declared and nothing extra is", () => {
     expect(READ_KEYS.length).toBeGreaterThan(0);
     expect([...MODEL.settings.keys()].sort()).toEqual([...READ_KEYS].sort());
+  });
+
+  test("the README configuration table matches the manifest", () => {
+    expect(checkReadmeSettings({ root: REPO_ROOT })).toEqual([]);
   });
 
   test("declared kinds and defaults match the Lua fallbacks", () => {
