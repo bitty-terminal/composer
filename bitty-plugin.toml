@@ -26,9 +26,10 @@ license = "MIT"
 # before activation and fails closed (disable with a diagnostic, no partial
 # activation) on mismatch.
 # W-103 D1 (CTX-0005, DEC-0001): the bitty floor is pinned to the
-# verified-against-current host 0.0.21, and the ceiling is deliberately
-# restrictive (<0.1) because 0.x minors may break. Revisit on API bumps.
-bitty = ">=0.0.21,<0.1"
+# verified-against-current host 0.0.21. The range is minimum-only: the Plugin
+# API range remains the breaking-change boundary, so later host releases stay
+# eligible without a manifest edit.
+bitty = ">=0.0.21"
 plugin-api = "^1.0"
 
 [capabilities]
