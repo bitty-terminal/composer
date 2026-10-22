@@ -15,7 +15,7 @@ only; it never mutates Terminal Truth.
 
 ## Install
 
-Prerequisites: Bitty `>=0.0.21,<0.1` and Plugin API `^1.0` (from
+Prerequisites: Bitty `>=0.0.21` and Plugin API `^1.0` (from
 `bitty-plugin.toml` `[compat]`).
 
 ```sh
@@ -115,7 +115,7 @@ role never compete.
 ## Scope
 
 - `bitty-plugin.toml`: plugin id `bitty-terminal.composer`, version `0.0.1`,
-  compat `bitty >=0.0.21,<0.1` with `plugin-api ^1.0`, exactly three
+  compat `bitty >=0.0.21` with `plugin-api ^1.0`, exactly three
   capabilities (`ui.overlay.focus`, `terminal.input.submit`,
   `process.editor`), a `[settings]` table declaring the five chord keys,
   lazy `open`/`submit`/`cancel`/`close`/`editor` commands and the

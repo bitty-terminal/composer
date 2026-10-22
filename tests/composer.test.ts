@@ -131,12 +131,13 @@ describe("manifest", () => {
     );
   });
 
-  test("compat.bitty admits the verified host 0.0.21 (W-103 D1)", () => {
+  test("compat.bitty admits the verified host floor and later hosts (W-103 D1)", () => {
     const match = MANIFEST_SOURCE.match(/^\s*bitty\s*=\s*"([^"]+)"\s*$/m);
-    expect(match?.[1]).toBe(">=0.0.21,<0.1");
+    expect(match?.[1]).toBe(">=0.0.21");
     expect(rangeAdmits(match?.[1] ?? "", "0.0.21")).toBe(true);
+    expect(rangeAdmits(match?.[1] ?? "", "0.1.0")).toBe(true);
+    expect(rangeAdmits(match?.[1] ?? "", "1.0.0")).toBe(true);
     expect(rangeAdmits(match?.[1] ?? "", "0.0.20")).toBe(false);
-    expect(rangeAdmits(match?.[1] ?? "", "0.1.0")).toBe(false);
     // Fail-closed evidence: the previous aspirational floor refused the host.
     expect(rangeAdmits(">=0.5,<1.0", "0.0.21")).toBe(false);
   });
