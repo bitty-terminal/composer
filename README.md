@@ -88,7 +88,7 @@ return {
   keymaps = {
     {
       chord = "ctrl+alt+e",
-      action = "bitty-terminal.composer:open",
+      action = "command:bitty-terminal.composer:open",
       context = "global",
     },
   },
