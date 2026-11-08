@@ -218,14 +218,18 @@ export function sessionSpec(run: ComposerRun): unknown {
 }
 
 /**
- * Inject one production-flat overlay input event (`{seq,type,text}` with no
- * `data` envelope, the shape the Rust bridge serves) directly into the
- * live session queue without draining. A call with no live session is a
+ * Inject one production overlay input event (`{seq,type,text}` with optional
+ * modifier `data` chord for modified keys per bitty#2098/#2104) directly into
+ * the live session queue without draining. A call with no live session is a
  * no-op, mirroring the mock's input routing.
  */
 export function injectFlat(
   run: ComposerRun,
-  event: { readonly type: string; readonly text?: string },
+  event: {
+    readonly type: string;
+    readonly text?: string;
+    readonly data?: Readonly<Record<string, unknown>>;
+  },
 ): void {
   const session = (
     run.host as unknown as {
@@ -235,11 +239,14 @@ export function injectFlat(
   if (session === undefined) return;
   const seq = session.nextSeq;
   session.nextSeq = seq + 1;
-  session.queue.push(
-    event.text === undefined
-      ? { seq, type: event.type }
-      : { seq, type: event.type, text: event.text },
-  );
+  const entry: Record<string, unknown> = { seq, type: event.type };
+  if (event.text !== undefined) {
+    entry["text"] = event.text;
+  }
+  if (event.data !== undefined) {
+    entry["data"] = event.data;
+  }
+  session.queue.push(entry);
 }
 
 /** Publish a focus transition to the plugin (payload per the mock v1 shape). */
