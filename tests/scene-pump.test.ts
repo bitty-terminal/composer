@@ -75,6 +75,47 @@ describe("open scene chrome (never a bare pill)", () => {
       ],
     });
   });
+
+  test("preview tail truncation advances to a UTF-8 codepoint boundary (composer#31)", async () => {
+    const run = await scenePump({ environment: { VISUAL: "nvim" } });
+    dispatch(run, OPEN_COMMAND);
+    // "中" is 3 UTF-8 bytes. 1332 * 3 = 3996 bytes (> tail_keep 3995).
+    // Raw byte slicing at #text - 3995 + 1 = byte 2 would leave 2 orphan
+    // continuation bytes right after "[...]". UTF-8 boundary slicing advances
+    // to byte 4, keeping 1331 whole characters (3993 bytes).
+    const cjk = "中".repeat(1332);
+    injectFlat(run, { type: "text", text: cjk });
+    await pump(run);
+    expect(await isOpen(run)).toBe(true);
+    expect(await bufferText(run)).toBe(cjk);
+    expect(sessionScene(run)).toEqual({
+      kind: "List",
+      children: [
+        { kind: "Text", text: "Composer" },
+        { kind: "Text", text: `[...]${"中".repeat(1331)}` },
+      ],
+    });
+  });
+
+  test("overlay.released ignores closed state and foreign owners (composer#31)", async () => {
+    const run = await scenePump({ environment: { VISUAL: "nvim" } });
+    // Release event while closed does not clobber last_code.
+    run.host.publish("overlay.released", {
+      owner: "bitty-terminal.palette",
+      reason: "cancelled",
+    });
+    expect(await lastCode(run)).toBe("ok");
+
+    dispatch(run, OPEN_COMMAND);
+    expect(await isOpen(run)).toBe(true);
+    // Foreign owner release while open leaves Composer open.
+    run.host.publish("overlay.released", {
+      owner: "bitty-terminal.palette",
+      reason: "cancelled",
+    });
+    expect(await isOpen(run)).toBe(true);
+    expect(await lastCode(run)).toBe("OPENED");
+  });
 });
 
 describe("production flat poll shape feeds the buffer", () => {
