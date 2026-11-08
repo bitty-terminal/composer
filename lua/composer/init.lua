@@ -427,7 +427,15 @@ local function preview_text()
   local text = session.buffer.text
   local tail_keep = M.PREVIEW_MAX_BYTES - #M.PREVIEW_MARKER
   if #text > tail_keep then
-    return M.PREVIEW_MARKER .. string.sub(text, #text - tail_keep + 1)
+    local start = #text - tail_keep + 1
+    while start <= #text do
+      local byte = string.byte(text, start)
+      if byte == nil or byte < 128 or byte >= 192 then
+        break
+      end
+      start = start + 1
+    end
+    return M.PREVIEW_MARKER .. string.sub(text, start)
   end
   return text
 end
@@ -1160,9 +1168,16 @@ do
   -- Observation only: Core already released capture on any involuntary cause.
   -- The handler performs no host calls, so it cannot throw.
   bitty.events.subscribe("overlay.released", function(event)
+    if not session.open then
+      return
+    end
+    local payload = event ~= nil and event.payload or nil
+    if payload ~= nil and type(payload.owner) == "string" and payload.owner ~= M.PLUGIN_ID then
+      return
+    end
     local reason = ""
-    if event ~= nil and event.payload ~= nil then
-      reason = tostring(event.payload.reason or "")
+    if payload ~= nil then
+      reason = tostring(payload.reason or "")
     end
     session.open = false
     session.handle = nil
