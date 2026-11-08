@@ -13,6 +13,14 @@ Core-owned temporary file. Opening is manual only: while the modal is closed,
 input bytes flow to the PTY and the plugin touches nothing. Presentation state
 only; it never mutates Terminal Truth.
 
+Open it with `bitty-terminal.composer:open`, or press the suggested `alt+e`
+chord; the host applies that chord only when it is free, and `open_chord`
+changes it. For example, run `bitty-terminal.composer:open`, type `git status`,
+and press `ctrl+enter`: the modal closes and the focused panel receives the line
+through the Core paste pipeline. `escape` closes the modal and keeps the draft
+for the next open; the other in-modal roles (`newline`, `submit`, `close`,
+`external_editor`) are settings, not global bindings.
+
 ## Install
 
 Prerequisites: Bitty `>=0.0.21` and Plugin API `^1.0` (from
