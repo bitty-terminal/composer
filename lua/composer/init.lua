@@ -766,12 +766,12 @@ local function event_text(ev)
 end
 
 -- Parses one production flat key label (`{type = "key", text = ...}`) to a
--- chord for role matching. The bridge carries produced text literally or a
--- `key:Name` label; field-level modifier encodings stay parked with the
--- input-pointer contract owner, so a flat label never matches a modified
--- role (the explicit session commands stay the exact path). Returns the
--- chord, the string "literal" for produced text (the caller inserts it,
--- except CR/LF below), or nil for unmapped labels.
+-- chord for role matching. Modified key presses carry `ev.data` alongside
+-- `ev.text` from the host chord channel (bitty#2098, #2104) and route via
+-- `feed_key(ev.data)`; unmodified presses and shift-only character presses
+-- arrive here with `ev.data == nil`. Returns the chord, the string "literal"
+-- for produced text (the caller inserts it, except CR/LF/ESC below), or nil
+-- for unmapped labels.
 local function flat_key_shape(text)
   if type(text) ~= "string" or text == "" then
     return nil
@@ -787,6 +787,12 @@ local function flat_key_shape(text)
     -- (composer#21) and defaults silently bank a CR instead of a newline.
     if text == "\r" or text == "\n" then
       return { key = "enter", ctrl = false, alt = false, shift = false, super = false }
+    end
+    -- Escape likewise produces "\27" (0x1b) in xkb/winit; route a flat ESC
+    -- key literal through the bare Escape role instead of inserting a raw
+    -- control byte into the command buffer.
+    if text == "\27" then
+      return { key = "escape", ctrl = false, alt = false, shift = false, super = false }
     end
     return "literal"
   end

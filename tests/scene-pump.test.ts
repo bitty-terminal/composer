@@ -125,6 +125,46 @@ describe("production flat poll shape feeds the buffer", () => {
     expect(run.host.submittedFrames[0]).toEqual(expectedFrame("CUSTOMSUB42"));
   });
 
+  test("production hybrid modified-key envelope submits default ctrl+enter and inserts shift-only chars (composer#21, bitty#2098, bitty#2104)", async () => {
+    const run = await scenePump({ environment: { VISUAL: "nvim" } });
+    dispatch(run, OPEN_COMMAND);
+    // Shift-only character keys arrive without `data` (bitty#2104) and insert literally.
+    injectFlat(run, { type: "key", text: "A" });
+    injectFlat(run, { type: "key", text: "!" });
+    await pump(run);
+    expect(await bufferText(run)).toBe("A!");
+    // Modified named keys carry both flat `text` ("\r") and `data` chord (bitty#2098).
+    injectFlat(run, {
+      type: "key",
+      text: "\r",
+      data: {
+        key: "enter",
+        ctrl: true,
+        alt: false,
+        shift: false,
+        super: false,
+      },
+    });
+    await pump(run);
+    expect(await lastCode(run)).toBe("SUBMITTED");
+    expect(await isOpen(run)).toBe(false);
+    expect(await bufferText(run)).toBe("");
+    expect(run.host.submittedFrames).toHaveLength(1);
+    expect(run.host.submittedFrames[0]).toEqual(expectedFrame("A!"));
+  });
+
+  test("flat ESC literal routes through the Escape close role keeping draft (composer#21)", async () => {
+    const run = await scenePump({ environment: { VISUAL: "nvim" } });
+    dispatch(run, OPEN_COMMAND);
+    injectFlat(run, { type: "text", text: "draft" });
+    injectFlat(run, { type: "key", text: "\x1b" });
+    await pump(run);
+    expect(await lastCode(run)).toBe("CLOSED");
+    expect(await isOpen(run)).toBe(false);
+    expect(await bufferText(run)).toBe("draft");
+    expect(run.host.submittedFrames).toEqual([]);
+  });
+
   test("flat key literals insert; key:Enter newlines; other labels swallow", async () => {
     const run = await scenePump({ environment: { VISUAL: "nvim" } });
     dispatch(run, OPEN_COMMAND);
